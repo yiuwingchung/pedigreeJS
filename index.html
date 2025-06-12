@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pedigree Chart using PedigreeMaker.js</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 20px;
+            background-color: #f7f7f7;
+            color: #333;
+        }
+        canvas {
+            border: 1px solid #ddd;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        #legend-container {
+            margin-top: 20px;
+            padding: 15px 20px;
+            border: 1px solid #ddd;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Marc's Family Pedigree</h1>
+
+    <!-- The canvas where the pedigree will be drawn -->
+    <canvas id="pedigreeCanvas" width="800" height="500"></canvas>
+
+    <!-- The container where the legend will be generated -->
+    <div id="legend-container"></div>
+
+    <!-- Include the LATEST version of the library -->
+    <script src="PedigreeMaker.js"></script>
+
+    <script>
+        // --- 1. Define the Family Data with Grid Positions ---
+        const familyData = [
+            // Generation I (y=0)
+            { id: 'kevin',   name: 'Kevin\n55', sex: 'M', pos: { x: 1, y: 0 }, mate: 'elsa' },
+            // DEMO: Elsa now has two phenotypes to show the pie-chart feature
+            { id: 'elsa',    name: 'Elsa\n49',  sex: 'F', pos: { x: 2, y: 0 }, phenotypes: ['poi', 'bc'] },
+            { id: 'antonio', name: 'Antonio\n65', sex: 'M', pos: { x: 5, y: 0 }, mate: 'flavia' },
+            { id: 'flavia',  name: 'Flavia\n63', sex: 'F', pos: { x: 6, y: 0 } },
+            
+            // Generation II (y=1)
+            { id: 'elizabeth', name: 'Elizabeth\n32', sex: 'F', pos: { x: 1.5, y: 1 }, parents: ['kevin', 'elsa'], mate: 'albert', phenotypes: ['poi'] },
+            { id: 'albert',    name: 'Albert\n35', sex: 'M', pos: { x: 5.5, y: 1 }, parents: ['antonio', 'flavia'] },
+            { id: 'ebony',     name: 'Ebony\n28', sex: 'F', pos: { x: 2.5, y: 1 }, parents: ['kevin', 'elsa'] },
+
+            // Generation III (y=2)
+            { id: 'marc', name: 'Marc', sex: 'M', pos: { x: 3.5, y: 2 }, parents: ['elizabeth', 'albert'], isProband: true }
+        ];
+
+        // --- 2. Define Custom Options and Phenotypes ---
+        const pedigreeOptions = {
+            hSpacing: 110, // Increase horizontal spacing
+            // The autoLayoutOptimize is on by default and will swap Elizabeth and Ebony
+            phenotypes: {
+                'poi': {
+                    facecolor: '#a9a9a9', // Light gray
+                    description: 'Premature Menopause (POI)'
+                },
+                'bc': {
+                    facecolor: '#ffc0cb', // Pink
+                    description: 'Breast Cancer'
+                },
+                'melanoma': {
+                    facecolor: '#666', // Dark Gray
+                    description: 'Melanoma'
+                }
+            }
+        };
+
+        // --- 3. Create and Render the Pedigree ---
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                const pedigree = new PedigreeMaker('pedigreeCanvas', familyData, pedigreeOptions);
+                pedigree.render();
+                pedigree.drawLegend('legend-container');
+
+            } catch (error) {
+                console.error("Failed to create pedigree:", error);
+            }
+        });
+    </script>
+</body>
+</html>

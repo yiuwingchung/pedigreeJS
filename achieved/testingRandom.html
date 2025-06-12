@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pedigree Chart - Duchenne Muscular Dystrophy Case</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 20px;
+            background-color: #f7f7f7;
+            color: #333;
+        }
+        canvas {
+            border: 1px solid #ddd;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        #legend-container {
+            margin-top: 20px;
+            padding: 15px 20px;
+            border: 1px solid #ddd;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            max-width: 1100px;
+        }
+        h1, h2 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        h2 {
+            font-size: 1.2em;
+            font-weight: normal;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Pedigree for a Family with Duchenne Muscular Dystrophy (DMD)</h1>
+    <h2>X-Linked Inheritance with Consanguinity</h2>
+
+    <canvas id="pedigreeCanvas" width="1200" height="650"></canvas>
+
+    <div id="legend-container"></div>
+
+    <script>
+    /**
+     * PedigreeMaker.js
+     * A simple, grid-based JavaScript library for drawing clinical pedigree charts on an HTML canvas.
+     * @version 1.5.0 (Corrected connection logic and layout handling)
+     * @author Gemini
+     */
+    class PedigreeMaker {
+        constructor(canvasId, pedigreeData, options = {}) {
+            this.canvas = document.getElementById(canvasId);
+            if (!this.canvas) {
+                throw new Error(`Canvas element with ID "${canvasId}" not found.`);
+            }
+            this.ctx = this.canvas.getContext('2d');
+            this.data = JSON.parse(JSON.stringify(pedigreeData));
+            
+            const defaults = {
+                nodeWidth: 50,
+                nodeHeight: 50,
+                hSpacing: 100,
+                vSpacing: 120,
+                lineWidth: 2,
+                lineColor: '#333',
+                font: '12px Arial',
+                probandArrowSize: 15,
+                padding: { top: 50, left: 20 },
+                autoLayoutOptimize: true,
+                phenotypes: {
+                    'default_affected': {
+                        facecolor: '#a9a9a9',
+                        description: 'Affected'
+                    }
+                }
+            };
+
+            this.config = Object.assign({}, defaults, options);
+            this.config.padding = Object.assign({}, defaults.padding, options.padding);
+            this.config.phenotypes = Object.assign({}, defaults.phenotypes, options.phenotypes);
+            this.nodeCoords = {};
+        }
+
+        _getPixelCoords(gridX, gridY) {
+            return {
+                x: gridX * this.config.hSpacing + this.config.padding.left,
+                y: gridY * this.config.vSpacing + this.config.padding.top
+            };
+        }
+        
+        _optimizeLayout() {
+            if (!this.config.autoLayoutOptimize) return;
+            this.data.forEach(person => {
+                if (person.mate) {
+                    const partner = this.data.find(p => p.id === person.mate);
+                    if (!partner) return;
+                    const lineStartX = Math.min(person.pos.x, partner.pos.x);
+                    const lineEndX = Math.max(person.pos.x, partner.pos.x);
+                    this.data.forEach(potentialObstacle => {
+                        if (potentialObstacle.id !== person.id && potentialObstacle.id !== partner.id && potentialObstacle.pos.y === person.pos.y) {
+                            if (potentialObstacle.pos.x > lineStartX && potentialObstacle.pos.x < lineEndX) {
+                                const areSiblings = JSON.stringify(person.parents?.sort()) === JSON.stringify(potentialObstacle.parents?.sort()) && person.parents !== undefined;
+                                if (areSiblings) {
+                                    const personOriginalX = person.pos.x;
+                                    person.pos.x = potentialObstacle.pos.x;
+                                    potentialObstacle.pos.x = personOriginalX;
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+        }
+
+        _drawNode(person) {
+            const { x, y } = this._getPixelCoords(person.pos.x, person.pos.y);
+            this.nodeCoords[person.id] = { x, y };
+
+            if (person.phenotypes && person.phenotypes.length > 0) {
+                this._drawPhenotypeFill(person, x, y);
+            }
+
+            this.ctx.beginPath();
+            this.ctx.strokeStyle = this.config.lineColor;
+            this.ctx.lineWidth = this.config.lineWidth;
+
+            if (person.sex === 'M') {
+                this.ctx.rect(x - this.config.nodeWidth / 2, y - this.config.nodeHeight / 2, this.config.nodeWidth, this.config.nodeHeight);
+            } else if (person.sex === 'F') {
+                this.ctx.arc(x, y, this.config.nodeWidth / 2, 0, 2 * Math.PI);
+            }
+            this.ctx.stroke();
+
+            if (person.isProband) {
+                const arrowX = x - this.config.nodeWidth / 2 - 5;
+                this.ctx.beginPath();
+                this.ctx.moveTo(arrowX - this.config.probandArrowSize, y);
+                this.ctx.lineTo(arrowX, y);
+                this.ctx.moveTo(arrowX, y);
+                this.ctx.lineTo(arrowX - 5, y - 5);
+                this.ctx.moveTo(arrowX, y);
+                this.ctx.lineTo(arrowX - 5, y + 5);
+                this.ctx.stroke();
+            }
+            
+            this._drawText(person.name, x, y + this.config.nodeHeight / 2 + 5);
+        }
+        
+        _drawPhenotypeFill(person, x, y) {
+            const phenotypes = person.phenotypes;
+            const numPhenotypes = phenotypes.length;
+            if (numPhenotypes === 0) return;
+
+            if (person.sex === 'F') { 
+                const radius = this.config.nodeWidth / 2;
+                const angleStep = (2 * Math.PI) / numPhenotypes;
+                phenotypes.forEach((phenoId, i) => {
+                    const style = this.config.phenotypes[phenoId] || this.config.phenotypes['default_affected'];
+                    if (style.facecolor) {
+                        this.ctx.fillStyle = style.facecolor;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(x, y);
+                        this.ctx.arc(x, y, radius, angleStep * i - (Math.PI / 2), angleStep * (i + 1) - (Math.PI / 2));
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                    }
+                });
+            } else if (person.sex === 'M') {
+                const barWidth = this.config.nodeWidth / numPhenotypes;
+                const startX = x - this.config.nodeWidth / 2;
+                phenotypes.forEach((phenoId, i) => {
+                     const style = this.config.phenotypes[phenoId] || this.config.phenotypes['default_affected'];
+                     if (style.facecolor) {
+                         this.ctx.fillStyle = style.facecolor;
+                         this.ctx.fillRect(startX + i * barWidth, y - this.config.nodeHeight / 2, barWidth, this.config.nodeHeight);
+                     }
+                });
+            }
+        }
+
+        _drawText(text, x, y) {
+            this.ctx.fillStyle = this.config.lineColor;
+            this.ctx.font = this.config.font;
+            this.ctx.textAlign = 'center';
+            const lines = text.split('\n');
+            lines.forEach((line, i) => {
+                this.ctx.fillText(line, x, y + 10 + (i * 14));
+            });
+        }
+
+        _drawConnections() {
+            this.ctx.strokeStyle = this.config.lineColor;
+            this.ctx.lineWidth = this.config.lineWidth;
+            const drawnPartnerships = new Set();
+            const childrenByParents = {};
+
+            this.data.forEach(person => {
+                if (person.parents && person.parents.length === 2) {
+                    const parentKey = person.parents.sort().join('-');
+                    if (!childrenByParents[parentKey]) {
+                        childrenByParents[parentKey] = [];
+                    }
+                    childrenByParents[parentKey].push(person.id);
+                }
+            });
+
+            this.data.forEach(person => {
+                if (person.mate) {
+                    const partnershipKey = [person.id, person.mate].sort().join('-');
+                    if (!drawnPartnerships.has(partnershipKey)) {
+                        const p1 = this.nodeCoords[person.id];
+                        const p2 = this.nodeCoords[person.mate];
+                        if (p1 && p2) {
+                            this.ctx.beginPath();
+                            const leftNode = p1.x < p2.x ? p1 : p2;
+                            const rightNode = p1.x < p2.x ? p2 : p1;
+                            this.ctx.moveTo(leftNode.x + this.config.nodeWidth / 2, leftNode.y);
+                            this.ctx.lineTo(rightNode.x - this.config.nodeWidth / 2, rightNode.y);
+                            this.ctx.stroke();
+                            drawnPartnerships.add(partnershipKey);
+                        }
+                    }
+                }
+            });
+
+            for (const parentKey in childrenByParents) {
+                const childrenIds = childrenByParents[parentKey];
+                const parentIds = parentKey.split('-');
+                const p1 = this.nodeCoords[parentIds[0]];
+                const p2 = this.nodeCoords[parentIds[1]];
+                
+                if (!p1 || !p2) continue;
+
+                const childCoords = childrenIds.map(id => this.nodeCoords[id]).filter(Boolean);
+                if (childCoords.length === 0) continue;
+
+                const parentMidX = (p1.x + p2.x) / 2;
+                const sibshipY = p1.y + this.config.vSpacing / 2;
+
+                this.ctx.beginPath();
+                this.ctx.moveTo(parentMidX, p1.y);
+                this.ctx.lineTo(parentMidX, sibshipY);
+                this.ctx.stroke();
+
+                const firstChildX = Math.min(...childCoords.map(c => c.x));
+                const lastChildX = Math.max(...childCoords.map(c => c.x));
+                this.ctx.beginPath();
+                this.ctx.moveTo(firstChildX, sibshipY);
+                this.ctx.lineTo(lastChildX, sibshipY);
+                this.ctx.stroke();
+
+                childCoords.forEach(child => {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(child.x, sibshipY);
+                    this.ctx.lineTo(child.x, child.y - this.config.nodeHeight / 2);
+                    this.ctx.stroke();
+                });
+            }
+        }
+
+
+        render() {
+            this._optimizeLayout();
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            this.data.forEach(person => this._drawNode(person));
+            this._drawConnections();
+        }
+        
+        drawLegend(legendId) {
+            const legendContainer = document.getElementById(legendId);
+            if (!legendContainer) return;
+            
+            let html = '<h3>Legend</h3>';
+            html += `
+                <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                    <span style="display: inline-block; width: 20px; height: 20px; border: 2px solid black; margin-right: 10px;"></span> Male
+                </div>
+                <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                    <span style="display: inline-block; width: 20px; height: 20px; border: 2px solid black; border-radius: 50%; margin-right: 10px;"></span> Female
+                </div>
+                 <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                    <span style="font-size: 24px; margin-right: 10px; line-height: 1;">&#8592;</span> Proband
+                </div>
+            `;
+
+            for (const key in this.config.phenotypes) {
+                 if (key === 'default_affected') continue;
+                const phenotype = this.config.phenotypes[key];
+                const style = `background-color: ${phenotype.facecolor || '#fff'};`;
+                html += `
+                    <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                        <span style="display: inline-block; width: 20px; height: 20px; border: 1px solid black; margin-right: 10px; ${style}"></span> ${phenotype.description}
+                    </div>
+                `;
+            }
+            legendContainer.innerHTML = html;
+        }
+    }
+    </script>
+
+    <script>
+        // --- 1. Define the Family Data with Grid Positions ---
+        const familyData = [
+            // --- Generation I ---
+            // Parents of II-5 (the cousin husband)
+            { id: 'I-5', name: 'I-5', sex: 'M', pos: { x: 0, y: 0 } },
+            { id: 'I-6', name: 'I-6', sex: 'F', pos: { x: 1, y: 0 }, mate: 'I-5' }, // Sister of I-2, establishing the first-cousin link
+            
+            // Maternal grandparents of the proband
+            { id: 'I-3', name: 'I-3', sex: 'M', pos: { x: 2.5, y: 0 } },
+            { id: 'I-2', name: 'I-2', sex: 'F', pos: { x: 3.5, y: 0 }, mate: 'I-3', phenotypes: ['carrier', 'manifesting'] },
+            { id: 'I-4', name: 'I-4\n(d. 20)', sex: 'F', pos: { x: 4.5, y: 0 }, parents: ['I-3', 'I-2'], phenotypes: ['affected'] },
+            
+            // Paternal grandparents of the proband
+            { id: 'I-1', name: 'I-1', sex: 'M', pos: { x: 7, y: 0 } }, // Tested negative
+            { id: 'I-7', name: 'I-7', sex: 'F', pos: { x: 8, y: 0 }, mate: 'I-1' },
+
+            // --- Generation II ---
+            // Consanguineous Couple
+            { id: 'II-5', name: 'II-5', sex: 'M', pos: { x: 0.5, y: 1 }, parents: ['I-5', 'I-6'] },
+            { id: 'II-1', name: 'II-1\nAge 42', sex: 'F', pos: { x: 2, y: 1 }, parents: ['I-3', 'I-2'], mate: 'II-5', phenotypes: ['carrier'] },
+
+            // Maternal Uncles/Aunts
+            { id: 'II-2', name: 'II-2\n(d. 14)', sex: 'M', pos: { x: 3, y: 1 }, parents: ['I-3', 'I-2'], phenotypes: ['affected'] },
+            { id: 'II-4', name: 'II-4\nMother\nAge 38', sex: 'F', pos: { x: 4, y: 1 }, parents: ['I-3', 'I-2'], phenotypes: ['carrier'] },
+            
+            // Proband's Father
+            { id: 'II-3', name: 'II-3\nFather', sex: 'M', pos: { x: 7.5, y: 1 }, parents: ['I-1', 'I-7'], mate: 'II-4'},
+
+            // --- Generation III ---
+            // Children of the consanguineous couple
+            { id: 'III-1', name: 'III-1', sex: 'M', pos: { x: 0.5, y: 2 }, parents: ['II-1', 'II-5'], phenotypes: ['affected'] },
+            { id: 'III-2', name: 'III-2', sex: 'M', pos: { x: 1.5, y: 2 }, parents: ['II-1', 'II-5'], phenotypes: ['affected'] },
+            { id: 'III-3', name: 'III-3', sex: 'M', pos: { x: 2.5, y: 2 }, parents: ['II-1', 'II-5'] },
+
+            // Children of the proband's parents
+            { id: 'III-5', name: 'III-5\nSister', sex: 'F', pos: { x: 5, y: 2 }, parents: ['II-3', 'II-4'], phenotypes: ['carrier', 'cardiomyopathy'] },
+            { id: 'III-4', name: 'III-4\nProband\nAge 12', sex: 'M', pos: { x: 6, y: 2 }, parents: ['II-3', 'II-4'], isProband: true, phenotypes: ['affected'] }
+        ];
+
+        // --- 2. Define Custom Options and Phenotypes ---
+        const pedigreeOptions = {
+            hSpacing: 110,
+            vSpacing: 140,
+            padding: { top: 50, left: 80 },
+            phenotypes: {
+                'affected': {
+                    facecolor: '#778899', // Slate Gray
+                    description: 'Affected (DMD)'
+                },
+                'carrier': {
+                    facecolor: '#E6E6FA', // Lavender
+                    description: 'Carrier (DMD)'
+                },
+                'manifesting': {
+                    facecolor: '#FF6347', // Tomato Red
+                    description: 'Symptomatic / Manifesting'
+                },
+                'cardiomyopathy': {
+                    facecolor: '#87CEEB', // Sky Blue
+                    description: 'Subclinical Cardiomyopathy'
+                }
+            }
+        };
+
+        // --- 3. Create and Render the Pedigree ---
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                const pedigree = new PedigreeMaker('pedigreeCanvas', familyData, pedigreeOptions);
+                pedigree.render();
+                pedigree.drawLegend('legend-container');
+
+            } catch (error) {
+                console.error("Failed to create pedigree:", error);
+                document.body.innerHTML = `<h1>Error Creating Pedigree</h1><p>${error.message}</p>`;
+            }
+        });
+    </script>
+
+</body>
+</html>
+
+<!-- Text description:
+
+
+**Pedigree Description:**
+
+The proband (III-4) is a 12-year-old male who presented with progressive muscular weakness and elevated creatine kinase levels, consistent with a diagnosis of Duchenne muscular dystrophy (DMD). The proband is the fourth child of non-consanguineous parents (II-3 and II-4). His mother (II-4), a 38-year-old female, is asymptomatic but was found to be a heterozygous carrier of a pathogenic *DMD* variant (NM\_004006.2\:c.1009C>T, p.(Arg337Ter)).
+
+The maternal lineage reveals a complex X-linked inheritance pattern with evidence of variable expressivity and skewed X-inactivation. The maternal grandmother (I-2) is also a confirmed carrier but shows mild proximal muscle weakness and cardiac arrhythmia suggestive of manifesting carrier status. I-2’s younger sister (I-4) died at age 20 from respiratory failure, retrospectively suspected to be due to an undiagnosed muscular dystrophy. No genetic testing was performed at the time.
+
+Of II-4’s siblings, her brother (II-2) died at age 14 due to progressive muscle degeneration. Her sister (II-1), age 42, is a carrier with completely skewed X-inactivation (methylation assay shows >95% inactivation of the mutant allele), and is asymptomatic. II-1 has three sons, two of whom (III-1 and III-2) are affected, while the youngest (III-3) is unaffected and tested negative for the familial variant. Their father (II-5) is a first cousin of II-1, introducing consanguinity into the pedigree.
+
+The proband (III-4) has one older sister (III-5) who tested positive as a carrier but currently has no symptoms; however, subclinical cardiomyopathy was detected on MRI. III-4’s maternal uncle (II-2) and one of the maternal aunt’s sons (III-1) both showed early-onset disease and severe progression.
+
+The paternal side of the family shows no history of neuromuscular disorders, and the paternal grandfather (I-1) was genetically confirmed not to carry the mutation. However, due to the consanguineous link through marriage of cousins (II-1 and II-5), it is suspected that the variant may have been propagated via shared maternal lineage rather than paternal introduction.
+
+--- -->

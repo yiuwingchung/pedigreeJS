@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marc's Family Pedigree Chart (Fixed)</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 20px;
+            background-color: #f7f7f7;
+            color: #333;
+        }
+        canvas {
+            border: 1px solid #ddd;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        #legend-container {
+            margin-top: 20px;
+            padding: 15px 20px;
+            border: 1px solid #ddd;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            width: 80%;
+            max-width: 1300px;
+        }
+        h1 {
+            color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Marc's Family Pedigree</h1>
+
+    <canvas id="pedigreeCanvas" width="1600" height="700"></canvas>
+
+    <div id="legend-container"></div>
+
+    <script>
+    /**
+     * PedigreeMaker.js
+     * A simple, grid-based JavaScript library for drawing clinical pedigree charts on an HTML canvas.
+     *
+     * @version 1.6.0 (Robust connection logic)
+     * @author Gemini
+     */
+    class PedigreeMaker {
+        constructor(canvasId, pedigreeData, options = {}) {
+            this.canvas = document.getElementById(canvasId);
+            if (!this.canvas) {
+                throw new Error(`Canvas element with ID "${canvasId}" not found.`);
+            }
+            this.ctx = this.canvas.getContext('2d');
+            this.data = JSON.parse(JSON.stringify(pedigreeData));
+            
+            const defaults = {
+                nodeWidth: 50,
+                nodeHeight: 50,
+                hSpacing: 100,
+                vSpacing: 120,
+                lineWidth: 2,
+                lineColor: '#333',
+                font: '12px Arial',
+                probandArrowSize: 15,
+                padding: { top: 50, left: 20 },
+                autoLayoutOptimize: true,
+                phenotypes: {
+                    'default_affected': {
+                        facecolor: '#a9a9a9',
+                        description: 'Affected'
+                    }
+                }
+            };
+
+            this.config = Object.assign({}, defaults, options);
+            this.config.padding = Object.assign({}, defaults.padding, options.padding);
+            this.config.phenotypes = Object.assign({}, defaults.phenotypes, options.phenotypes);
+            this.nodeCoords = {};
+        }
+
+        _getPixelCoords(gridX, gridY) {
+            return {
+                x: gridX * this.config.hSpacing + this.config.padding.left,
+                y: gridY * this.config.vSpacing + this.config.padding.top
+            };
+        }
+        
+        _optimizeLayout() {
+            if (!this.config.autoLayoutOptimize) return;
+            this.data.forEach(person => {
+                if (person.mate) {
+                    const partner = this.data.find(p => p.id === person.mate);
+                    if (!partner) return;
+                    const lineStartX = Math.min(person.pos.x, partner.pos.x);
+                    const lineEndX = Math.max(person.pos.x, partner.pos.x);
+                    this.data.forEach(potentialObstacle => {
+                        if (potentialObstacle.id !== person.id && potentialObstacle.id !== partner.id && potentialObstacle.pos.y === person.pos.y) {
+                            if (potentialObstacle.pos.x > lineStartX && potentialObstacle.pos.x < lineEndX) {
+                                const areSiblings = JSON.stringify(person.parents?.sort()) === JSON.stringify(potentialObstacle.parents?.sort()) && person.parents !== undefined;
+                                if (areSiblings) {
+                                    const personOriginalX = person.pos.x;
+                                    person.pos.x = potentialObstacle.pos.x;
+                                    potentialObstacle.pos.x = personOriginalX;
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+        }
+
+        _drawNode(person) {
+            const { x, y } = this._getPixelCoords(person.pos.x, person.pos.y);
+            this.nodeCoords[person.id] = { x, y };
+
+            if (person.phenotypes && person.phenotypes.length > 0) {
+                this._drawPhenotypeFill(person, x, y);
+            }
+
+            this.ctx.beginPath();
+            this.ctx.strokeStyle = this.config.lineColor;
+            this.ctx.lineWidth = this.config.lineWidth;
+
+            if (person.sex === 'M') {
+                this.ctx.rect(x - this.config.nodeWidth / 2, y - this.config.nodeHeight / 2, this.config.nodeWidth, this.config.nodeHeight);
+            } else if (person.sex === 'F') {
+                this.ctx.arc(x, y, this.config.nodeWidth / 2, 0, 2 * Math.PI);
+            }
+            this.ctx.stroke();
+
+            if (person.isProband) {
+                const arrowX = x - this.config.nodeWidth / 2 - 5;
+                this.ctx.beginPath();
+                this.ctx.moveTo(arrowX - this.config.probandArrowSize, y);
+                this.ctx.lineTo(arrowX, y);
+                this.ctx.moveTo(arrowX, y);
+                this.ctx.lineTo(arrowX - 5, y - 5);
+                this.ctx.moveTo(arrowX, y);
+                this.ctx.lineTo(arrowX - 5, y + 5);
+                this.ctx.stroke();
+            }
+            
+            this._drawText(person.name, x, y + this.config.nodeHeight / 2 + 5);
+        }
+        
+        _drawPhenotypeFill(person, x, y) {
+            const phenotypes = person.phenotypes;
+            const numPhenotypes = phenotypes.length;
+            if (numPhenotypes === 0) return;
+
+            if (person.sex === 'F') { // Pie chart for females
+                const radius = this.config.nodeWidth / 2;
+                const angleStep = (2 * Math.PI) / numPhenotypes;
+                phenotypes.forEach((phenoId, i) => {
+                    const style = this.config.phenotypes[phenoId] || this.config.phenotypes['default_affected'];
+                    if (style.facecolor) {
+                        this.ctx.fillStyle = style.facecolor;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(x, y);
+                        this.ctx.arc(x, y, radius, angleStep * i - (Math.PI / 2), angleStep * (i + 1) - (Math.PI / 2));
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                    }
+                });
+            } else if (person.sex === 'M') { // Vertical bars for males
+                const barWidth = this.config.nodeWidth / numPhenotypes;
+                const startX = x - this.config.nodeWidth / 2;
+                phenotypes.forEach((phenoId, i) => {
+                     const style = this.config.phenotypes[phenoId] || this.config.phenotypes['default_affected'];
+                     if (style.facecolor) {
+                         this.ctx.fillStyle = style.facecolor;
+                         this.ctx.fillRect(startX + i * barWidth, y - this.config.nodeHeight / 2, barWidth, this.config.nodeHeight);
+                     }
+                });
+            }
+        }
+
+        _drawText(text, x, y) {
+            this.ctx.fillStyle = this.config.lineColor;
+            this.ctx.font = this.config.font;
+            this.ctx.textAlign = 'center';
+            const lines = text.split('\n');
+            lines.forEach((line, i) => {
+                this.ctx.fillText(line, x, y + 10 + (i * 14));
+            });
+        }
+        
+        // ====================================================================
+        //  FIX APPLIED HERE
+        //  This entire function has been rewritten to be more robust. It
+        //  logically groups all drawing commands for a single family unit,
+        //  which prevents disconnection errors.
+        // ====================================================================
+        _drawConnections() {
+            this.ctx.strokeStyle = this.config.lineColor;
+            this.ctx.lineWidth = this.config.lineWidth;
+            const drawnPartnerships = new Set();
+            const childrenByParents = {};
+
+            // 1. Group all children by a unique ID representing their parents.
+            this.data.forEach(person => {
+                if (person.parents && person.parents.length === 2) {
+                    const parentKey = person.parents.sort().join('-'); // e.g., "antonio-flavia"
+                    if (!childrenByParents[parentKey]) {
+                        childrenByParents[parentKey] = [];
+                    }
+                    childrenByParents[parentKey].push(person.id);
+                }
+            });
+
+            // 2. Draw partnership lines for ALL couples, regardless of whether they have children.
+            this.data.forEach(person => {
+                if (person.mate) {
+                    const partnershipKey = [person.id, person.mate].sort().join('-');
+                    if (!drawnPartnerships.has(partnershipKey)) {
+                        const p1 = this.nodeCoords[person.id];
+                        const p2 = this.nodeCoords[person.mate];
+                        if (p1 && p2) {
+                            this.ctx.beginPath();
+                            const leftNode = p1.x < p2.x ? p1 : p2;
+                            const rightNode = p1.x < p2.x ? p2 : p1;
+                            this.ctx.moveTo(leftNode.x + this.config.nodeWidth / 2, leftNode.y);
+                            this.ctx.lineTo(rightNode.x - this.config.nodeWidth / 2, rightNode.y);
+                            this.ctx.stroke();
+                            drawnPartnerships.add(partnershipKey);
+                        }
+                    }
+                }
+            });
+
+            // 3. For each family that HAS children, draw their complete connection lines.
+            for (const parentKey in childrenByParents) {
+                const childrenIds = childrenByParents[parentKey];
+                const parentIds = parentKey.split('-');
+                const p1 = this.nodeCoords[parentIds[0]]; // Parent 1 coords
+                const p2 = this.nodeCoords[parentIds[1]]; // Parent 2 coords
+                
+                // Safety check: ensure both parents were drawn
+                if (!p1 || !p2) continue;
+
+                const childCoords = childrenIds.map(id => this.nodeCoords[id]).filter(Boolean);
+                if (childCoords.length === 0) continue;
+
+                const parentMidX = (p1.x + p2.x) / 2;
+                const sibshipY = p1.y + this.config.vSpacing / 2;
+
+                // Draw the vertical drop-down line from the parents' partnership
+                this.ctx.beginPath();
+                this.ctx.moveTo(parentMidX, p1.y);
+                this.ctx.lineTo(parentMidX, sibshipY);
+                this.ctx.stroke();
+
+                // Draw the horizontal line that connects all siblings
+                const firstChildX = Math.min(...childCoords.map(c => c.x));
+                const lastChildX = Math.max(...childCoords.map(c => c.x));
+                this.ctx.beginPath();
+                this.ctx.moveTo(firstChildX, sibshipY);
+                this.ctx.lineTo(lastChildX, sibshipY);
+                this.ctx.stroke();
+
+                // Draw the short vertical lines from the sibship line to each child
+                childCoords.forEach(child => {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(child.x, sibshipY);
+                    this.ctx.lineTo(child.x, child.y - this.config.nodeHeight / 2);
+                    this.ctx.stroke();
+                });
+            }
+        }
+
+
+        render() {
+            this._optimizeLayout();
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            this.data.forEach(person => this._drawNode(person));
+            this._drawConnections();
+        }
+        
+        drawLegend(legendId) {
+            const legendContainer = document.getElementById(legendId);
+            if (!legendContainer) return;
+            
+            let html = '<h3>Legend</h3>';
+            html += `
+                <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                    <span style="display: inline-block; width: 20px; height: 20px; border: 2px solid black; margin-right: 10px;"></span> Male
+                </div>
+                <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                    <span style="display: inline-block; width: 20px; height: 20px; border: 2px solid black; border-radius: 50%; margin-right: 10px;"></span> Female
+                </div>
+                 <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                    <span style="font-size: 24px; margin-right: 10px; line-height: 1;">&#8592;</span> Proband (Individual of interest)
+                </div>
+            `;
+
+            for (const key in this.config.phenotypes) {
+                 if (key === 'default_affected') continue;
+                const phenotype = this.config.phenotypes[key];
+                const style = `background-color: ${phenotype.facecolor || '#fff'};`;
+                html += `
+                        <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                            <span style="display: inline-block; width: 20px; height: 20px; border: 1px solid black; margin-right: 10px; ${style}"></span> ${phenotype.description}
+                        </div>
+                `;
+            }
+            legendContainer.innerHTML = html;
+        }
+    }
+    </script>
+
+    <script>
+        // --- 1. Define the Family Data with Grid Positions ---
+        // This data correctly defines the relationships. The fix is in the JS class above.
+        const familyData = [
+            // --- Generation I (Grandparents' Generation) ---
+            { id: 'elvira_p', name: '', sex: 'M', pos: { x: 0, y: 0 } },
+            { id: 'elvira',   name: 'Elvira\n60', sex: 'F', pos: { x: 1, y: 0 }, mate: 'elvira_p', phenotypes: ['bc'] },
+            { id: 'thomas',   name: 'Thomas\n59', sex: 'M', pos: { x: 2, y: 0 } },
+            { id: 'jason',    name: 'Jason\n57', sex: 'M', pos: { x: 3, y: 0 }, mate: 'jason_p', phenotypes: ['melanoma'] },
+            { id: 'jason_p',  name: '', sex: 'F', pos: { x: 4, y: 0 } },
+            { id: 'kevin',    name: 'Kevin\n55', sex: 'M', pos: { x: 5.5, y: 0 }, mate: 'elsa' },
+            { id: 'elsa',     name: 'Elsa\n49', sex: 'F', pos: { x: 6.5, y: 0 }, phenotypes: ['poi'] },
+            { id: 'erika',    name: 'Erika\n48', sex: 'F', pos: { x: 7.5, y: 0 }, phenotypes: ['poi'] },
+            { id: 'antonio',  name: 'Antonio\n65', sex: 'M', pos: { x: 10, y: 0 }, mate: 'flavia' },
+            { id: 'flavia',   name: 'Flavia\n63', sex: 'F', pos: { x: 11, y: 0 }, mate: 'antonio' },
+
+            // --- Generation II (Parents' Generation) ---
+            { id: 'twin1',          name: 'Daughter\n35', sex: 'F', pos: { x: 0.5, y: 1 }, parents: ['elvira', 'elvira_p'] },
+            { id: 'twin2',          name: 'Daughter\n35', sex: 'F', pos: { x: 1.5, y: 1 }, parents: ['elvira', 'elvira_p'] },
+            { id: 'jason_son',      name: 'Son\n29', sex: 'M', pos: { x: 3, y: 1 }, parents: ['jason', 'jason_p'] },
+            { id: 'jason_daughter', name: 'Daughter\n35', sex: 'F', pos: { x: 4, y: 1 }, parents: ['jason', 'jason_p'], mate: 'jd_p' },
+            { id: 'jd_p',           name: '', sex: 'M', pos: { x: 5, y: 1 } },
+            { id: 'ebony',          name: 'Ebony\n28', sex: 'F', pos: { x: 6, y: 1 }, parents: ['kevin', 'elsa'] },
+            { id: 'elizabeth',      name: 'Elizabeth\n32', sex: 'F', pos: { x: 7, y: 1 }, parents: ['kevin', 'elsa'], mate: 'albert', phenotypes: ['poi'] },
+            { id: 'albert',         name: 'Albert\n35', sex: 'M', pos: { x: 8, y: 1 }, parents: ['antonio', 'flavia'] },
+            { id: 'heidi',          name: 'Heidi\n37', sex: 'F', pos: { x: 9, y: 1 }, parents: ['antonio', 'flavia'] },
+            { id: 'claudia',        name: 'Claudia\n39', sex: 'F', pos: { x: 10, y: 1 }, parents: ['antonio', 'flavia'], mate: 'claudia_p' },
+            { id: 'claudia_p',      name: '', sex: 'M', pos: { x: 11, y: 1 } },
+            
+            // --- Generation III (Marc's Generation) ---
+            { id: 'jason_granddaughter', name: 'Daughter\n5', sex: 'F', pos: { x: 4.5, y: 2 }, parents: ['jason_daughter', 'jd_p'] },
+            { id: 'marc',                name: 'Marc', sex: 'M', pos: { x: 7.5, y: 2 }, parents: ['elizabeth', 'albert'], isProband: true },
+            { id: 'stephan',             name: 'Stephan', sex: 'M', pos: { x: 10, y: 2 }, parents: ['claudia', 'claudia_p'] },
+            { id: 'rosa',                name: 'Rosa', sex: 'F', pos: { x: 11, y: 2 }, parents: ['claudia', 'claudia_p'] },
+        ];
+
+        // --- 2. Define Custom Options and Phenotypes ---
+        const pedigreeOptions = {
+            hSpacing: 100,
+            vSpacing: 130,
+            padding: { top: 50, left: 50 },
+            phenotypes: {
+                'poi': {
+                    facecolor: '#AEC6CF', // Pastel Blue
+                    description: 'Premature Menopause'
+                },
+                'bc': {
+                    facecolor: '#FFB347', // Orange
+                    description: 'Breast Cancer'
+                },
+                'melanoma': {
+                    facecolor: '#77DD77', // Pastel Green
+                    description: 'Melanoma'
+                }
+            }
+        };
+
+        // --- 3. Create and Render the Pedigree ---
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                const pedigree = new PedigreeMaker('pedigreeCanvas', familyData, pedigreeOptions);
+                pedigree.render();
+                pedigree.drawLegend('legend-container');
+            } catch (error) {
+                console.error("Failed to create pedigree:", error);
+                document.body.innerHTML = `<h1>Error creating pedigree</h1><p>${error.message}</p>`;
+            }
+        });
+    </script>
+
+</body>
+</html>
